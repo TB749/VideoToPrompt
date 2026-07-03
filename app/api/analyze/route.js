@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { GoogleGenAI, createPartFromUri, createUserContent } from '@google/genai';
 import { Resend } from 'resend';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,9 +20,10 @@ import {
   parseGeminiJson,
 } from '../../../lib/analysis';
 import { analysisEmailHtml, analysisEmailText } from '../../../lib/email';
+import { generateSeedanceVideo } from '../../../lib/seedance';
 
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 300;
@@ -102,8 +104,9 @@ async function saveProductImage(upload, jobDir) {
   if (!IMAGE_EXTENSIONS[upload.type]) throw new Error('产品参考图片仅支持 JPG、PNG 或 WebP。');
   if (upload.size > MAX_PRODUCT_IMAGE_BYTES) throw new Error('产品参考图片超过 10 MB 限制。请压缩后重试。');
   const imagePath = path.join(jobDir, `product-reference.${IMAGE_EXTENSIONS[upload.type]}`);
-  await writeFile(imagePath, Buffer.from(await upload.arrayBuffer()));
-  return { imagePath, mimeType: upload.type };
+  const imageBuffer = Buffer.from(await upload.arrayBuffer());
+  await writeFile(imagePath, imageBuffer);
+  return { imagePath, imageBuffer, mimeType: upload.type };
 }
 
 async function waitUntilActive(ai, file, kind = '文件') {
@@ -146,11 +149,12 @@ export async function POST(request) {
     }
 
     const geminiApiKey = requiredEnv('GEMINI_API_KEY');
+    requiredEnv('SEEDANCE_API_KEY');
     const resendApiKey = requiredEnv('RESEND_API_KEY');
     const emailFrom = requiredEnv('EMAIL_FROM');
 
     jobDir = await mkdtemp(path.join(os.tmpdir(), 'tiktok-gemini-'));
-    const [{ imagePath, mimeType: imageMimeType }, videoPath] = await Promise.all([
+    const [{ imagePath, imageBuffer, mimeType: imageMimeType }, videoPath] = await Promise.all([
       saveProductImage(productImage, jobDir),
       downloadVideo(url, jobDir),
     ]);
@@ -266,6 +270,14 @@ export async function POST(request) {
       }
     }
 
+    const jobName = randomUUID();
+    const seedance = await generateSeedanceVideo({
+      prompt: production.seedance_2_prompt,
+      imageBuffer,
+      imageMimeType,
+      jobName,
+    });
+
     const analysis = { ...breakdown, video_prompt: production };
     const resend = new Resend(resendApiKey);
     const { data, error } = await resend.emails.send({
@@ -277,7 +289,13 @@ export async function POST(request) {
     });
     if (error) throw new Error(`邮件发送失败：${error.message}`);
 
-    return NextResponse.json({ ok: true, analysis, emailId: data?.id || null, recipient: EMAIL_RECIPIENT });
+    return NextResponse.json({
+      ok: true,
+      analysis,
+      seedance,
+      emailId: data?.id || null,
+      recipient: EMAIL_RECIPIENT,
+    });
   } catch (error) {
     console.error('Analyze route error:', error);
     const message = error instanceof Error ? error.message : '服务器发生未知错误。';

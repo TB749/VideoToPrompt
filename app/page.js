@@ -30,15 +30,16 @@ function PromptProductionView({ prompt }) {
 
 function BreakdownView({ result }) {
   const data = result.analysis;
+  const seedance = result.seedance;
 
   return (
     <section className="result" aria-live="polite">
       <div className="resultHeader">
         <div>
-          <p className="eyebrow">Gemini 分析完成</p>
+          <p className="eyebrow">Gemini + Seedance 流程完成</p>
           <h2>{data.title}</h2>
         </div>
-        <span className="badge">已发送至邮箱</span>
+        <span className="badge">MP4 已生成</span>
       </div>
 
       <p className="summary">{data.one_line_summary}</p>
@@ -78,9 +79,34 @@ function BreakdownView({ result }) {
         <PromptProductionView prompt={data.video_prompt} />
       </div>
 
+      {seedance && (
+        <div className="outputGrid">
+          <article>
+            <span>Seedance 任务</span>
+            <strong>{seedance.task_id || '已提交'}</strong>
+          </article>
+          <article>
+            <span>视频生成</span>
+            <strong>{seedance.generation_status || 'completed'}</strong>
+          </article>
+          <article>
+            <span>本地输出</span>
+            <strong>{seedance.final_video_path || 'output/<job>/final.mp4'}</strong>
+          </article>
+        </div>
+      )}
+
+      {seedance?.final_video_url && (
+        <p className="downloadLink">
+          <a href={seedance.final_video_url} download>
+            下载 Seedance final.mp4
+          </a>
+        </p>
+      )}
+
       <details>
         <summary>查看原始 JSON</summary>
-        <pre>{JSON.stringify(data, null, 2)}</pre>
+        <pre>{JSON.stringify(result, null, 2)}</pre>
       </details>
     </section>
   );
@@ -112,7 +138,7 @@ export default function Home() {
     }
 
     setIsLoading(true);
-    setStatus('正在上传产品参考图片并下载授权视频…');
+    setStatus('正在上传产品参考图片、下载授权视频并生成 Seedance MP4…');
 
     try {
       const body = new FormData();
@@ -130,7 +156,7 @@ export default function Home() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || '处理失败。');
 
-      setStatus('视频、产品参考图分析与邮件发送完成。');
+      setStatus('Seedance 视频已生成，final.mp4 可以下载。');
       setResult(payload);
     } catch (err) {
       setStatus('');
@@ -146,7 +172,7 @@ export default function Home() {
         <p className="eyebrow">PRIVATE CREATOR TOOL</p>
         <h1>TikTok 视频 → Seedance 2.0 7 秒创作包</h1>
         <p className="lead">
-          输入一个 TikTok 链接并上传产品参考图。系统从参考视频提取内容机制，使用产品图生成可直接粘贴到 Seedance 2.0 的原创中文 7 秒提示词、无文字无旁白分镜，以及独立的英文后期旁白；结果同时发送至指定邮箱。
+          输入一个 TikTok 链接并上传产品参考图。系统从参考视频提取内容机制，生成 Seedance 2.0 中文提示词，自动调用 Seedance API 生成 7 秒 9:16 MP4，并在页面提供下载。
         </p>
       </section>
 
@@ -209,12 +235,12 @@ export default function Home() {
           </label>
 
           <button type="submit" disabled={isLoading}>
-            {isLoading ? '正在处理…' : '生成 Seedance 2.0 7 秒创作包'}
+            {isLoading ? '正在生成 final.mp4…' : '生成 Seedance 2.0 7 秒 MP4'}
           </button>
         </form>
 
         <div className="workflow" aria-label="处理流程">
-          <span>1. 链接</span><i>→</i><span>2. 产品图</span><i>→</i><span>3. 授权下载</span><i>→</i><span>4. Gemini 分析</span><i>→</i><span>5. Seedance 创作包 + 邮件</span>
+          <span>1. 链接</span><i>→</i><span>2. 产品图</span><i>→</i><span>3. 授权下载</span><i>→</i><span>4. Gemini 分析</span><i>→</i><span>5. Seedance 生成 MP4 + 下载</span>
         </div>
 
         {status && <p className="status">{status}</p>}
@@ -224,7 +250,7 @@ export default function Home() {
       {result && <BreakdownView result={result} />}
 
       <p className="footnote">
-        视频与产品参考图仅在处理期间保存在服务器临时目录。系统会在请求结束时删除本地副本和 Gemini 临时文件。
+        参考视频与产品图仅在处理期间保存在服务器临时目录。Seedance 生成的 final.mp4 会暂存在服务器 output 目录，供本页面下载。
       </p>
     </main>
   );
