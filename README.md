@@ -66,10 +66,11 @@ Set these in Render → Environment:
 GEMINI_API_KEY=your_google_ai_studio_key
 GEMINI_MODEL=gemini-2.5-flash
 FAL_KEY=your_fal_api_key
-FAL_SEEDANCE_MODEL=fal-ai/bytedance/seedance/v1/lite/image-to-video
+FAL_SEEDANCE_MODEL=bytedance/seedance-2.0/image-to-video
 FAL_SEEDANCE_DURATION=7
 FAL_SEEDANCE_ASPECT_RATIO=9:16
 FAL_SEEDANCE_RESOLUTION=720p
+FAL_SEEDANCE_GENERATE_AUDIO=false
 RESEND_API_KEY=re_your_resend_key
 EMAIL_FROM=TikTok Breakdown <results@your-verified-domain.com>
 RESULT_RECIPIENT=tombee10@gmail.com
