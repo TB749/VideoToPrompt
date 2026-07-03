@@ -20,6 +20,7 @@ import {
   parseGeminiJson,
 } from '../../../lib/analysis';
 import { analysisEmailHtml, analysisEmailText } from '../../../lib/email';
+import { elapsedMs, logError, logInfo, logWarn } from '../../../lib/logger';
 import { generateSeedanceVideo } from '../../../lib/seedance';
 
 export const runtime = 'nodejs';
@@ -131,16 +132,27 @@ function responseDiagnostics(response) {
 }
 
 export async function POST(request) {
+  const traceId = randomUUID().slice(0, 8);
+  const requestStartedAt = Date.now();
   let jobDir;
   const uploadedFiles = [];
 
   try {
+    logInfo(traceId, 'request.start');
     const formData = await request.formData();
     const url = getTextField(formData, 'url', 2000);
     const accessCode = getTextField(formData, 'accessCode', 500);
     const creativeBrief = getTextField(formData, 'creativeBrief', 500);
     const authorized = getTextField(formData, 'authorized', 20) === 'true';
     const productImage = formData.get('productImage');
+    logInfo(traceId, 'request.form_parsed', {
+      has_url: Boolean(url),
+      has_product_image: Boolean(productImage),
+      product_image_type: productImage?.type || null,
+      product_image_size: productImage?.size || null,
+      creative_brief_chars: creativeBrief.length,
+      authorized,
+    });
 
     if (!authorized) return NextResponse.json({ error: '必须确认你拥有该视频或已获得明确授权。' }, { status: 400 });
     if (!safeTikTokUrl(url)) return NextResponse.json({ error: '请输入一个有效的 HTTPS TikTok 视频链接。' }, { status: 400 });
@@ -152,27 +164,58 @@ export async function POST(request) {
     requiredEnv('FAL_KEY');
     const resendApiKey = requiredEnv('RESEND_API_KEY');
     const emailFrom = requiredEnv('EMAIL_FROM');
+    logInfo(traceId, 'env.validated', {
+      gemini_model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      fal_seedance_model: process.env.FAL_SEEDANCE_MODEL || 'default',
+      fal_seedance_duration: process.env.FAL_SEEDANCE_DURATION || '7',
+      result_recipient: EMAIL_RECIPIENT,
+    });
 
     jobDir = await mkdtemp(path.join(os.tmpdir(), 'tiktok-gemini-'));
+    logInfo(traceId, 'workspace.created', { job_dir: jobDir });
+
+    logInfo(traceId, 'input.prepare.start');
+    const prepareStartedAt = Date.now();
     const [{ imagePath, imageBuffer, mimeType: imageMimeType }, videoPath] = await Promise.all([
       saveProductImage(productImage, jobDir),
       downloadVideo(url, jobDir),
     ]);
+    const videoStat = await stat(videoPath);
+    logInfo(traceId, 'input.prepare.success', {
+      elapsed_ms: elapsedMs(prepareStartedAt),
+      image_mime_type: imageMimeType,
+      image_bytes: imageBuffer.length,
+      video_bytes: videoStat.size,
+    });
 
     const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+    logInfo(traceId, 'gemini.upload.video.start', { video_bytes: videoStat.size });
+    const geminiVideoUploadStartedAt = Date.now();
     const initialUploadedVideo = await ai.files.upload({
       file: videoPath,
       config: { mimeType: 'video/mp4', displayName: 'authorized-tiktok-video.mp4' },
     });
     uploadedFiles.push(initialUploadedVideo);
     const uploadedVideo = await waitUntilActive(ai, initialUploadedVideo, '视频');
+    logInfo(traceId, 'gemini.upload.video.success', {
+      elapsed_ms: elapsedMs(geminiVideoUploadStartedAt),
+      file_name: uploadedVideo.name,
+      state: uploadedVideo.state || 'ACTIVE',
+    });
 
+    logInfo(traceId, 'gemini.upload.image.start', { image_mime_type: imageMimeType, image_bytes: imageBuffer.length });
+    const geminiImageUploadStartedAt = Date.now();
     const initialUploadedProductImage = await ai.files.upload({
       file: imagePath,
       config: { mimeType: imageMimeType, displayName: 'product-reference-image' },
     });
     uploadedFiles.push(initialUploadedProductImage);
     const uploadedProductImage = await waitUntilActive(ai, initialUploadedProductImage, '产品参考图片');
+    logInfo(traceId, 'gemini.upload.image.success', {
+      elapsed_ms: elapsedMs(geminiImageUploadStartedAt),
+      file_name: uploadedProductImage.name,
+      state: uploadedProductImage.state || 'ACTIVE',
+    });
 
     const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const mediaParts = [
@@ -181,6 +224,8 @@ export async function POST(request) {
     ];
 
     async function generateJson({ instruction, schema, temperature, label }) {
+      const startedAt = Date.now();
+      logInfo(traceId, 'gemini.generate.start', { label, temperature, model });
       const response = await ai.models.generateContent({
         model,
         contents: createUserContent([...mediaParts, instruction]),
@@ -191,9 +236,15 @@ export async function POST(request) {
         },
       });
       const raw = response.text || '';
+      logInfo(traceId, 'gemini.generate.response', {
+        label,
+        elapsed_ms: elapsedMs(startedAt),
+        chars: raw.length,
+        finish_reason: response?.candidates?.[0]?.finishReason || null,
+      });
       if (!raw.trim()) {
         const diagnostic = responseDiagnostics(response);
-        console.error(`${label} returned empty Gemini text:`, diagnostic);
+        logError(traceId, 'gemini.generate.empty', { label, diagnostic });
         throw new Error(`${label} 未返回文本。Gemini 诊断：${diagnostic}`);
       }
       return raw;
@@ -212,7 +263,7 @@ export async function POST(request) {
       });
       breakdown = normalizeBreakdown(parseGeminiJson(rawBreakdown));
     } catch (breakdownError) {
-      console.warn('Gemini breakdown fallback used:', breakdownError instanceof Error ? breakdownError.message : breakdownError);
+      logWarn(traceId, 'gemini.breakdown.fallback_used', breakdownError);
     }
 
     let production;
@@ -226,9 +277,17 @@ export async function POST(request) {
         label: 'Gemini Seedance production package',
       });
       production = normalizeProduction(parseGeminiJson(firstRaw));
+      logInfo(traceId, 'gemini.production.normalized', {
+        prompt_chars: production.seedance_2_prompt.length,
+        shot_count: production.shot_plan.length,
+      });
     } catch (firstError) {
       firstFailure = firstError instanceof Error ? firstError.message : '第一次制作包生成失败。';
-      console.warn('Gemini first structured-output attempt failed:', firstFailure, '\nRaw output:', firstRaw.slice(0, 3500));
+      logWarn(traceId, 'gemini.production.first_attempt_failed', {
+        message: firstFailure,
+        raw_chars: firstRaw.length,
+        raw_preview: firstRaw.slice(0, 1000),
+      });
 
       try {
         const repairRaw = await generateJson({
@@ -244,7 +303,7 @@ export async function POST(request) {
         production = normalizeProduction(parseGeminiJson(repairRaw));
       } catch (repairError) {
         const repairFailure = repairError instanceof Error ? repairError.message : '第二次制作包生成失败。';
-        console.error('Gemini production repair attempt failed:', repairFailure);
+        logError(traceId, 'gemini.production.repair_failed', { message: repairFailure });
 
         // A final, very small recovery path. This prevents a complete
         // production package from failing solely because the model dropped
@@ -264,22 +323,36 @@ export async function POST(request) {
           production = normalizeProduction({ ...partial, shot_plan: repairedShots.shot_plan });
         } catch (storyboardError) {
           const message = storyboardError instanceof Error ? storyboardError.message : '最终分镜修复失败。';
-          console.error('Gemini storyboard-only repair failed:', message);
+          logError(traceId, 'gemini.production.storyboard_repair_failed', { message });
           throw new Error('Gemini 未能生成完整的 Seedance 制作包。请稍后再次提交；若持续失败，请在 Render 日志中复制 “Gemini Seedance production package” 或 “Gemini first structured-output attempt failed” 后面的诊断内容。');
         }
       }
     }
 
     const jobName = randomUUID();
+    logInfo(traceId, 'seedance.start', {
+      job_name: jobName,
+      prompt_chars: production.seedance_2_prompt.length,
+    });
     const seedance = await generateSeedanceVideo({
       prompt: production.seedance_2_prompt,
       imageBuffer,
       imageMimeType,
       jobName,
+      traceId,
+    });
+    logInfo(traceId, 'seedance.success', {
+      provider: seedance.provider,
+      provider_model: seedance.provider_model,
+      task_id: seedance.task_id,
+      bytes: seedance.bytes,
+      final_video_url: seedance.final_video_url,
     });
 
     const analysis = { ...breakdown, video_prompt: production };
     const resend = new Resend(resendApiKey);
+    logInfo(traceId, 'email.send.start', { recipient: EMAIL_RECIPIENT });
+    const emailStartedAt = Date.now();
     const { data, error } = await resend.emails.send({
       from: emailFrom,
       to: [EMAIL_RECIPIENT],
@@ -288,7 +361,15 @@ export async function POST(request) {
       text: analysisEmailText({ sourceUrl: url, analysis }),
     });
     if (error) throw new Error(`邮件发送失败：${error.message}`);
+    logInfo(traceId, 'email.send.success', {
+      elapsed_ms: elapsedMs(emailStartedAt),
+      email_id: data?.id || null,
+    });
 
+    logInfo(traceId, 'request.success', {
+      elapsed_ms: elapsedMs(requestStartedAt),
+      job_name: jobName,
+    });
     return NextResponse.json({
       ok: true,
       analysis,
@@ -297,21 +378,30 @@ export async function POST(request) {
       recipient: EMAIL_RECIPIENT,
     });
   } catch (error) {
-    console.error('Analyze route error:', error);
+    logError(traceId, 'request.error', {
+      elapsed_ms: elapsedMs(requestStartedAt),
+      error,
+    });
     const message = error instanceof Error ? error.message : '服务器发生未知错误。';
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
     if (uploadedFiles.length && process.env.GEMINI_API_KEY) {
       const cleanupAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      await Promise.allSettled(uploadedFiles.map(async (file) => {
+      const cleanupResults = await Promise.allSettled(uploadedFiles.map(async (file) => {
         if (file?.name) await cleanupAi.files.delete({ name: file.name });
       }));
+      logInfo(traceId, 'gemini.cleanup.complete', {
+        attempted: uploadedFiles.length,
+        fulfilled: cleanupResults.filter((result) => result.status === 'fulfilled').length,
+        rejected: cleanupResults.filter((result) => result.status === 'rejected').length,
+      });
     }
     if (jobDir) {
       try {
         await rm(jobDir, { recursive: true, force: true });
+        logInfo(traceId, 'workspace.cleanup.complete', { job_dir: jobDir });
       } catch (cleanupError) {
-        console.warn('Unable to delete temporary directory:', cleanupError);
+        logWarn(traceId, 'workspace.cleanup.failed', cleanupError);
       }
     }
   }
