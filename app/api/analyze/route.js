@@ -149,7 +149,7 @@ export async function POST(request) {
     }
 
     const geminiApiKey = requiredEnv('GEMINI_API_KEY');
-    requiredEnv('SEEDANCE_API_KEY');
+    requiredEnv('FAL_KEY');
     const resendApiKey = requiredEnv('RESEND_API_KEY');
     const emailFrom = requiredEnv('EMAIL_FROM');
 

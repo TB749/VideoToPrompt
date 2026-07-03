@@ -6,7 +6,7 @@ A private Next.js + Docker service for an authorized workflow:
 2. Upload one product reference image (JPG, PNG, or WebP, maximum 10 MB).
 3. The server downloads the authorized video with `yt-dlp`.
 4. Gemini processes the reference video and product image.
-5. The tool sends the generated prompt and product image to the Seedance API.
+5. The tool sends the generated prompt and product image to Seedance through fal.ai.
 6. Seedance generates a 7-second 9:16 MP4.
 7. The browser shows a download link for `final.mp4`, and the creative package is emailed to the configured address.
 8. The server removes local temporary reference files and requests deletion of the temporary Gemini uploads.
@@ -56,7 +56,7 @@ The master prompt and every visual prompt are forced to begin with:
 Use the product shown in the attached picture to generate the prompt.
 ```
 
-The app sends this master prompt and the uploaded product image to the configured Seedance API automatically.
+The app sends this master prompt and the uploaded product image to the configured fal.ai Seedance endpoint automatically.
 
 ## Environment variables
 
@@ -65,19 +65,18 @@ Set these in Render → Environment:
 ```text
 GEMINI_API_KEY=your_google_ai_studio_key
 GEMINI_MODEL=gemini-2.5-flash
-SEEDANCE_API_KEY=your_seedance_api_key
-SEEDANCE_API_BASE=https://ark.cn-beijing.volces.com/api/v3
-SEEDANCE_MODEL=doubao-seedance-1-0-pro-250528
-SEEDANCE_DURATION_SECONDS=7
-SEEDANCE_RATIO=9:16
-SEEDANCE_RESOLUTION=720p
+FAL_KEY=your_fal_api_key
+FAL_SEEDANCE_MODEL=fal-ai/bytedance/seedance/v1/lite/image-to-video
+FAL_SEEDANCE_DURATION=7
+FAL_SEEDANCE_ASPECT_RATIO=9:16
+FAL_SEEDANCE_RESOLUTION=720p
 RESEND_API_KEY=re_your_resend_key
 EMAIL_FROM=TikTok Breakdown <results@your-verified-domain.com>
 RESULT_RECIPIENT=tombee10@gmail.com
 APP_PASSWORD=create-your-own-private-password
 ```
 
-`GEMINI_MODEL` is optional; the app defaults to `gemini-2.5-flash`. The Seedance variables default to a Volcengine/Ark-style async task API; override `SEEDANCE_API_BASE`, `SEEDANCE_MODEL`, or the other `SEEDANCE_*` values if your provider gives you different settings.
+`GEMINI_MODEL` is optional; the app defaults to `gemini-2.5-flash`. The fal.ai Seedance model slug is configurable through `FAL_SEEDANCE_MODEL`; use the exact endpoint slug from your fal.ai dashboard if it differs from the default.
 
 ### Resend test mode
 
