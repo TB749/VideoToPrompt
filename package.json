@@ -9,7 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@fal-ai/client": "^1.6.2",
     "@google/genai": "^1.30.0",
     "next": "^16.0.0",
     "react": "^19.0.0",

@@ -21,7 +21,6 @@ import {
 } from '../../../lib/analysis';
 import { analysisEmailHtml, analysisEmailText } from '../../../lib/email';
 import { elapsedMs, logError, logInfo, logWarn } from '../../../lib/logger';
-import { generateSeedanceVideo } from '../../../lib/seedance';
 
 export const runtime = 'nodejs';
 export const maxDuration = 600;
@@ -104,10 +103,11 @@ async function saveProductImage(upload, jobDir) {
   if (!isUpload(upload) || !upload.size) throw new Error('请上传产品参考图片。');
   if (!IMAGE_EXTENSIONS[upload.type]) throw new Error('产品参考图片仅支持 JPG、PNG 或 WebP。');
   if (upload.size > MAX_PRODUCT_IMAGE_BYTES) throw new Error('产品参考图片超过 10 MB 限制。请压缩后重试。');
-  const imagePath = path.join(jobDir, `product-reference.${IMAGE_EXTENSIONS[upload.type]}`);
+  const fileName = `product-reference.${IMAGE_EXTENSIONS[upload.type]}`;
+  const imagePath = path.join(jobDir, fileName);
   const imageBuffer = Buffer.from(await upload.arrayBuffer());
   await writeFile(imagePath, imageBuffer);
-  return { imagePath, imageBuffer, mimeType: upload.type };
+  return { imagePath, imageBuffer, mimeType: upload.type, fileName };
 }
 
 async function waitUntilActive(ai, file, kind = '文件') {
@@ -161,13 +161,10 @@ export async function POST(request) {
     }
 
     const geminiApiKey = requiredEnv('GEMINI_API_KEY');
-    requiredEnv('FAL_KEY');
     const resendApiKey = requiredEnv('RESEND_API_KEY');
     const emailFrom = requiredEnv('EMAIL_FROM');
     logInfo(traceId, 'env.validated', {
       gemini_model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-      fal_seedance_model: process.env.FAL_SEEDANCE_MODEL || 'default',
-      fal_seedance_duration: process.env.FAL_SEEDANCE_DURATION || '7',
       result_recipient: EMAIL_RECIPIENT,
     });
 
@@ -176,7 +173,7 @@ export async function POST(request) {
 
     logInfo(traceId, 'input.prepare.start');
     const prepareStartedAt = Date.now();
-    const [{ imagePath, imageBuffer, mimeType: imageMimeType }, videoPath] = await Promise.all([
+    const [{ imagePath, imageBuffer, mimeType: imageMimeType, fileName: imageFileName }, videoPath] = await Promise.all([
       saveProductImage(productImage, jobDir),
       downloadVideo(url, jobDir),
     ]);
@@ -329,29 +326,14 @@ export async function POST(request) {
       }
     }
 
-    const jobName = randomUUID();
-    logInfo(traceId, 'seedance.start', {
-      job_name: jobName,
-      prompt_chars: production.seedance_2_prompt.length,
-    });
-    const seedance = await generateSeedanceVideo({
-      prompt: production.seedance_2_prompt,
-      imageBuffer,
-      imageMimeType,
-      jobName,
-      traceId,
-    });
-    logInfo(traceId, 'seedance.success', {
-      provider: seedance.provider,
-      provider_model: seedance.provider_model,
-      task_id: seedance.task_id,
-      bytes: seedance.bytes,
-      final_video_url: seedance.final_video_url,
-    });
-
     const analysis = { ...breakdown, video_prompt: production };
     const resend = new Resend(resendApiKey);
-    logInfo(traceId, 'email.send.start', { recipient: EMAIL_RECIPIENT });
+    logInfo(traceId, 'email.send.start', {
+      recipient: EMAIL_RECIPIENT,
+      attachment_file_name: imageFileName,
+      attachment_bytes: imageBuffer.length,
+      prompt_chars: production.seedance_2_prompt.length,
+    });
     const emailStartedAt = Date.now();
     const { data, error } = await resend.emails.send({
       from: emailFrom,
@@ -359,6 +341,12 @@ export async function POST(request) {
       subject: `TikTok 中文拆解｜${analysis.title}`,
       html: analysisEmailHtml({ sourceUrl: url, analysis }),
       text: analysisEmailText({ sourceUrl: url, analysis }),
+      attachments: [
+        {
+          filename: imageFileName,
+          content: imageBuffer.toString('base64'),
+        },
+      ],
     });
     if (error) throw new Error(`邮件发送失败：${error.message}`);
     logInfo(traceId, 'email.send.success', {
@@ -368,12 +356,16 @@ export async function POST(request) {
 
     logInfo(traceId, 'request.success', {
       elapsed_ms: elapsedMs(requestStartedAt),
-      job_name: jobName,
+      email_id: data?.id || null,
     });
     return NextResponse.json({
       ok: true,
       analysis,
-      seedance,
+      email: {
+        id: data?.id || null,
+        recipient: EMAIL_RECIPIENT,
+        attachment: imageFileName,
+      },
       emailId: data?.id || null,
       recipient: EMAIL_RECIPIENT,
     });

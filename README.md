@@ -6,10 +6,8 @@ A private Next.js + Docker service for an authorized workflow:
 2. Upload one product reference image (JPG, PNG, or WebP, maximum 10 MB).
 3. The server downloads the authorized video with `yt-dlp`.
 4. Gemini processes the reference video and product image.
-5. The tool sends the generated prompt and product image to Seedance through fal.ai.
-6. Seedance generates a 7-second 9:16 MP4.
-7. The browser shows a download link for `final.mp4`, and the creative package is emailed to the configured address.
-8. The server removes local temporary reference files and requests deletion of the temporary Gemini uploads.
+5. The tool emails the Seedance prompt package and attaches the same product reference image.
+6. The server removes local temporary reference files and requests deletion of the temporary Gemini uploads.
 
 ## v6 reliability update
 
@@ -36,7 +34,6 @@ Other v6 improvements:
 
 - Chinese TikTok short-video breakdown.
 - One Chinese Seedance 2.0 master prompt for a 7-second, 9:16 TikTok/Reels video.
-- One generated Seedance MP4 saved as `output/<job>/final.mp4` and exposed through a page download link.
 - A connected 4–6 shot storyboard covering `00:00–00:07`.
   - Each shot contains only visual prompt and camera/editing direction.
 - The master prompt and every visual prompt explicitly require:
@@ -56,7 +53,7 @@ The master prompt and every visual prompt are forced to begin with:
 Use the product shown in the attached picture to generate the prompt.
 ```
 
-The app sends this master prompt and the uploaded product image to the configured fal.ai Seedance endpoint automatically.
+The app emails this master prompt and attaches the uploaded product image so you can use both together in Seedance.
 
 ## Environment variables
 
@@ -65,19 +62,13 @@ Set these in Render → Environment:
 ```text
 GEMINI_API_KEY=your_google_ai_studio_key
 GEMINI_MODEL=gemini-2.5-flash
-FAL_KEY=your_fal_api_key
-FAL_SEEDANCE_MODEL=bytedance/seedance-2.0/fast/image-to-video
-FAL_SEEDANCE_DURATION=7
-FAL_SEEDANCE_ASPECT_RATIO=9:16
-FAL_SEEDANCE_RESOLUTION=720p
-FAL_SEEDANCE_GENERATE_AUDIO=false
 RESEND_API_KEY=re_your_resend_key
 EMAIL_FROM=TikTok Breakdown <results@your-verified-domain.com>
 RESULT_RECIPIENT=tombee10@gmail.com
 APP_PASSWORD=create-your-own-private-password
 ```
 
-`GEMINI_MODEL` is optional; the app defaults to `gemini-2.5-flash`. The fal.ai Seedance model slug is configurable through `FAL_SEEDANCE_MODEL`; use the exact endpoint slug from your fal.ai dashboard if it differs from the default.
+`GEMINI_MODEL` is optional; the app defaults to `gemini-2.5-flash`.
 
 ### Resend test mode
 
@@ -106,4 +97,4 @@ npm run dev
 
 - Only submit TikTok videos that you own or are authorized to download, analyze, and use.
 - The reference video is used to extract general content mechanics, not to copy the original creator, scenes, voice, composition, brand, or music.
-- The generated MP4 is stored on the running Render instance. Download it from the result page after each generation.
+- The email includes the generated Seedance prompt package and the uploaded product reference image as an attachment.
