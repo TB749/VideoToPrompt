@@ -28,6 +28,23 @@ function PromptProductionView({ prompt }) {
   );
 }
 
+function DownloadPanel({ seedance }) {
+  if (!seedance?.final_video_url) return null;
+
+  return (
+    <section className="downloadPanel" aria-label="Seedance 视频下载">
+      <div>
+        <p className="eyebrow">SEEDANCE MP4 READY</p>
+        <h2>final.mp4 已生成</h2>
+        <p>{seedance.final_video_path || 'output/<job>/final.mp4'}</p>
+      </div>
+      <a className="downloadButton" href={seedance.final_video_url} download>
+        下载 final.mp4
+      </a>
+    </section>
+  );
+}
+
 function BreakdownView({ result }) {
   const data = result.analysis;
   const seedance = result.seedance;
@@ -97,11 +114,16 @@ function BreakdownView({ result }) {
       )}
 
       {seedance?.final_video_url && (
-        <p className="downloadLink">
-          <a href={seedance.final_video_url} download>
-            下载 Seedance final.mp4
-          </a>
-        </p>
+        <>
+          <video className="videoPreview" controls src={seedance.final_video_url}>
+            <a href={seedance.final_video_url} download>下载 final.mp4</a>
+          </video>
+          <p className="downloadLink">
+            <a href={seedance.final_video_url} download>
+              下载 Seedance final.mp4
+            </a>
+          </p>
+        </>
       )}
 
       <details>
@@ -246,6 +268,8 @@ export default function Home() {
         {status && <p className="status">{status}</p>}
         {error && <p className="error">{error}</p>}
       </section>
+
+      <DownloadPanel seedance={result?.seedance} />
 
       {result && <BreakdownView result={result} />}
 
